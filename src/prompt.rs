@@ -6,9 +6,12 @@ use std::{
 
 use glob::glob;
 use jsonschema::JSONSchema;
+use regex::Regex;
 use serde_json::Value;
 
 use crate::{config::Config, env_scan::normalize_path};
+
+pub const TEMPLATE_VAR_REGEX: &str = r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptFailureKind {
@@ -18,6 +21,7 @@ pub enum PromptFailureKind {
     InvalidGoldenJson,
     SchemaViolation,
     InvalidSchema,
+    MissingTemplateInput,
 }
 
 #[derive(Debug, Clone)]
@@ -42,8 +46,9 @@ pub fn validate_fixture(schema_path: &Path, fixture_path: &Path) -> Result<(), S
         fs::read_to_string(fixture_path).map_err(|err| format!("fixture cannot be read: {err}"))?;
     let fixture_json: Value = serde_json::from_str(&fixture_raw)
         .map_err(|err| format!("fixture is not valid JSON: {err}"))?;
+    let validation_target = fixture_json.get("output").unwrap_or(&fixture_json);
 
-    if let Err(errors) = compiled.validate(&fixture_json) {
+    if let Err(errors) = compiled.validate(validation_target) {
         let reason = errors
             .map(|err| err.to_string())
             .next()
@@ -52,6 +57,44 @@ pub fn validate_fixture(schema_path: &Path, fixture_path: &Path) -> Result<(), S
     };
 
     Ok(())
+}
+
+pub fn validate_template_inputs(
+    required_vars: &BTreeSet<String>,
+    fixture_path: &Path,
+) -> Result<(), String> {
+    if required_vars.is_empty() {
+        return Ok(());
+    }
+
+    let fixture_raw =
+        fs::read_to_string(fixture_path).map_err(|err| format!("fixture cannot be read: {err}"))?;
+    let fixture_json: Value = serde_json::from_str(&fixture_raw)
+        .map_err(|err| format!("fixture is not valid JSON: {err}"))?;
+    let Some(input) = fixture_json
+        .get("input")
+        .and_then(|value| value.as_object())
+    else {
+        return Err(format!(
+            "fixture is missing `input` object for prompt template variables: {}",
+            required_vars.iter().cloned().collect::<Vec<_>>().join(", ")
+        ));
+    };
+
+    let missing = required_vars
+        .iter()
+        .filter(|variable| !input.contains_key(*variable))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "fixture input is missing prompt template variables: {}",
+            missing.join(", ")
+        ))
+    }
 }
 
 pub fn check_prompts(root: &Path, config: &Config, changed_files: &[String]) -> Vec<PromptFailure> {
@@ -133,7 +176,20 @@ fn validate_contract(
         return failures;
     }
 
+    let template_vars = collect_template_variables(&prompt_files);
+
     for fixture_path in fixture_paths {
+        if let Err(reason) = validate_template_inputs(&template_vars, &fixture_path) {
+            failures.push(PromptFailure {
+                kind: PromptFailureKind::MissingTemplateInput,
+                file: None,
+                contract: Some(name.to_string()),
+                schema: None,
+                fixture: Some(fixture_path.clone()),
+                reason,
+            });
+        }
+
         if let Err(reason) = validate_fixture(&schema_path, &fixture_path) {
             let kind = if reason.contains("schema is not valid JSON")
                 || reason.contains("schema cannot be compiled")
@@ -159,6 +215,23 @@ fn validate_contract(
     }
 
     failures
+}
+
+fn collect_template_variables(prompt_files: &[PathBuf]) -> BTreeSet<String> {
+    let regex = Regex::new(TEMPLATE_VAR_REGEX).expect("template variable regex should compile");
+    let mut variables = BTreeSet::new();
+
+    for prompt_file in prompt_files {
+        let Ok(raw) = fs::read_to_string(prompt_file) else {
+            continue;
+        };
+
+        for captures in regex.captures_iter(&raw) {
+            variables.insert(captures[1].to_string());
+        }
+    }
+
+    variables
 }
 
 fn resolve_contract_files(root: &Path, config: &Config) -> BTreeMap<String, BTreeSet<String>> {
@@ -264,6 +337,76 @@ mod tests {
 
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].kind, PromptFailureKind::SchemaViolation);
+    }
+
+    #[test]
+    fn validates_input_output_fixture_shape_for_templated_prompt() {
+        let dir = tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "src/prompts/router.md",
+            "Route this request: {{user_payload}}",
+        );
+        write_file(
+            dir.path(),
+            "schemas/router.schema.json",
+            r#"{
+  "type": "object",
+  "required": ["destination"],
+  "properties": {
+    "destination": { "type": "string" }
+  },
+  "additionalProperties": false
+}"#,
+        );
+        write_file(
+            dir.path(),
+            "tests/golden/router/case_01.json",
+            r#"{
+  "input": { "user_payload": "billing issue" },
+  "output": { "destination": "support" }
+}"#,
+        );
+
+        let failures = check_prompts(dir.path(), &router_config(), &[]);
+
+        assert!(failures.is_empty());
+    }
+
+    #[test]
+    fn reports_missing_template_input_variable() {
+        let dir = tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "src/prompts/router.md",
+            "Route {{user_payload}} for {{customer_tier}}.",
+        );
+        write_file(
+            dir.path(),
+            "schemas/router.schema.json",
+            r#"{
+  "type": "object",
+  "required": ["destination"],
+  "properties": {
+    "destination": { "type": "string" }
+  },
+  "additionalProperties": false
+}"#,
+        );
+        write_file(
+            dir.path(),
+            "tests/golden/router/case_01.json",
+            r#"{
+  "input": { "user_payload": "billing issue" },
+  "output": { "destination": "support" }
+}"#,
+        );
+
+        let failures = check_prompts(dir.path(), &router_config(), &[]);
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].kind, PromptFailureKind::MissingTemplateInput);
+        assert!(failures[0].reason.contains("customer_tier"));
     }
 
     #[test]

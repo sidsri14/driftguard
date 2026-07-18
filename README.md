@@ -52,7 +52,33 @@ Prompt contracts are active only when their mapped prompt files exist.
 - Rust: `std::env::var("KEY")` and `env!("KEY")`
 - Missing keys in configured env manifests
 - Prompt golden fixtures that violate configured JSON schemas
+- Prompt template variables like `{{user_payload}}` missing from golden fixture inputs
 - Changed prompt markdown files without mapped contracts when `--since` is used
+
+## Golden fixtures
+
+Simple golden fixtures can be the expected output JSON directly:
+
+```json
+{
+  "destination": "support"
+}
+```
+
+For templated prompts, use an `input` object plus an `output` object. DriftGuard
+checks that every `{{variable}}` in the prompt has a matching `input` key, then
+validates `output` against the configured JSON Schema:
+
+```json
+{
+  "input": {
+    "user_payload": "I need help with billing"
+  },
+  "output": {
+    "destination": "support"
+  }
+}
+```
 
 ## GitHub Actions
 

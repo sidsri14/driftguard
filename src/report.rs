@@ -130,5 +130,8 @@ fn prompt_title(kind: &PromptFailureKind) -> &'static str {
             "Prompt payload fixture breaks structural JSON contract."
         }
         PromptFailureKind::InvalidSchema => "Prompt contract schema is invalid.",
+        PromptFailureKind::MissingTemplateInput => {
+            "Prompt fixture is missing required template input variables."
+        }
     }
 }
