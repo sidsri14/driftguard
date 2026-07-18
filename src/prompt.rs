@@ -30,6 +30,30 @@ pub struct PromptFailure {
     pub reason: String,
 }
 
+pub fn validate_fixture(schema_path: &Path, fixture_path: &Path) -> Result<(), String> {
+    let schema_raw = fs::read_to_string(schema_path)
+        .map_err(|err| format!("failed to read schema file: {err}"))?;
+    let schema_json: Value = serde_json::from_str(&schema_raw)
+        .map_err(|err| format!("schema is not valid JSON: {err}"))?;
+    let compiled = JSONSchema::compile(&schema_json)
+        .map_err(|err| format!("schema cannot be compiled: {err}"))?;
+
+    let fixture_raw =
+        fs::read_to_string(fixture_path).map_err(|err| format!("fixture cannot be read: {err}"))?;
+    let fixture_json: Value = serde_json::from_str(&fixture_raw)
+        .map_err(|err| format!("fixture is not valid JSON: {err}"))?;
+
+    if let Err(errors) = compiled.validate(&fixture_json) {
+        let reason = errors
+            .map(|err| err.to_string())
+            .next()
+            .unwrap_or_else(|| "fixture failed schema validation".to_string());
+        return Err(reason);
+    };
+
+    Ok(())
+}
+
 pub fn check_prompts(root: &Path, config: &Config, changed_files: &[String]) -> Vec<PromptFailure> {
     let mut failures = Vec::new();
     let contracts = resolve_contract_files(root, config);
@@ -84,50 +108,17 @@ fn validate_contract(
     }
 
     let schema_path = root.join(&contract.schema);
-    let schema_raw = match fs::read_to_string(&schema_path) {
-        Ok(raw) => raw,
-        Err(_) => {
-            failures.push(PromptFailure {
-                kind: PromptFailureKind::MissingSchema,
-                file: None,
-                contract: Some(name.to_string()),
-                schema: Some(schema_path),
-                fixture: None,
-                reason: "schema file does not exist or cannot be read".to_string(),
-            });
-            return failures;
-        }
-    };
-
-    let schema_json: Value = match serde_json::from_str(&schema_raw) {
-        Ok(value) => value,
-        Err(err) => {
-            failures.push(PromptFailure {
-                kind: PromptFailureKind::InvalidSchema,
-                file: None,
-                contract: Some(name.to_string()),
-                schema: Some(schema_path),
-                fixture: None,
-                reason: format!("schema is not valid JSON: {err}"),
-            });
-            return failures;
-        }
-    };
-
-    let compiled = match JSONSchema::compile(&schema_json) {
-        Ok(compiled) => compiled,
-        Err(err) => {
-            failures.push(PromptFailure {
-                kind: PromptFailureKind::InvalidSchema,
-                file: None,
-                contract: Some(name.to_string()),
-                schema: Some(schema_path),
-                fixture: None,
-                reason: format!("schema cannot be compiled: {err}"),
-            });
-            return failures;
-        }
-    };
+    if !schema_path.is_file() {
+        failures.push(PromptFailure {
+            kind: PromptFailureKind::MissingSchema,
+            file: None,
+            contract: Some(name.to_string()),
+            schema: Some(schema_path),
+            fixture: None,
+            reason: "schema file does not exist or cannot be read".to_string(),
+        });
+        return failures;
+    }
 
     let fixture_paths = glob_paths(root, &contract.golden);
     if fixture_paths.is_empty() {
@@ -143,50 +134,28 @@ fn validate_contract(
     }
 
     for fixture_path in fixture_paths {
-        let raw = match fs::read_to_string(&fixture_path) {
-            Ok(raw) => raw,
-            Err(err) => {
-                failures.push(PromptFailure {
-                    kind: PromptFailureKind::InvalidGoldenJson,
-                    file: None,
-                    contract: Some(name.to_string()),
-                    schema: Some(schema_path.clone()),
-                    fixture: Some(fixture_path),
-                    reason: format!("fixture cannot be read: {err}"),
-                });
-                continue;
-            }
-        };
+        if let Err(reason) = validate_fixture(&schema_path, &fixture_path) {
+            let kind = if reason.contains("schema is not valid JSON")
+                || reason.contains("schema cannot be compiled")
+            {
+                PromptFailureKind::InvalidSchema
+            } else if reason.contains("fixture cannot be read")
+                || reason.contains("fixture is not valid JSON")
+            {
+                PromptFailureKind::InvalidGoldenJson
+            } else {
+                PromptFailureKind::SchemaViolation
+            };
 
-        let fixture_json: Value = match serde_json::from_str(&raw) {
-            Ok(value) => value,
-            Err(err) => {
-                failures.push(PromptFailure {
-                    kind: PromptFailureKind::InvalidGoldenJson,
-                    file: None,
-                    contract: Some(name.to_string()),
-                    schema: Some(schema_path.clone()),
-                    fixture: Some(fixture_path),
-                    reason: format!("fixture is not valid JSON: {err}"),
-                });
-                continue;
-            }
-        };
-
-        if let Err(errors) = compiled.validate(&fixture_json) {
-            let reason = errors
-                .map(|err| err.to_string())
-                .next()
-                .unwrap_or_else(|| "fixture failed schema validation".to_string());
             failures.push(PromptFailure {
-                kind: PromptFailureKind::SchemaViolation,
+                kind,
                 file: None,
                 contract: Some(name.to_string()),
                 schema: Some(schema_path.clone()),
                 fixture: Some(fixture_path),
                 reason,
             });
-        };
+        }
     }
 
     failures

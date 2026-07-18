@@ -60,3 +60,7 @@ The included `.github/workflows/driftguard.yml` validates this repository by
 installing the local crate with `cargo install --path .`. After DriftGuard is
 published, consumer repositories can replace that install step with
 `cargo install driftguard --locked`.
+
+When using `driftguard check --since origin/main`, keep `fetch-depth: 0` on
+`actions/checkout@v4`. DriftGuard needs the base branch ref available locally to
+compute changed prompt files.
