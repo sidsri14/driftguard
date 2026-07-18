@@ -1,0 +1,28 @@
+name: DriftGuard
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  driftguard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install DriftGuard
+        run: cargo install --path .
+
+      - name: Check deployment contracts
+        if: github.event_name == 'pull_request'
+        run: driftguard check --since origin/${{ github.base_ref }} --markdown
+
+      - name: Check deployment contracts
+        if: github.event_name != 'pull_request'
+        run: driftguard check --markdown

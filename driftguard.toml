@@ -1,0 +1,11 @@
+env_files = [".env.example"]
+
+[prompts.extractor]
+files = ["src/prompts/extraction_v2.md"]
+schema = "schemas/extraction.schema.json"
+golden = "tests/golden/extractor/*.json"
+
+[prompts.router]
+files = ["src/prompts/router.md"]
+schema = "schemas/router.schema.json"
+golden = "tests/golden/router/*.json"
