@@ -47,6 +47,7 @@ Prompt contracts are active only when their mapped prompt files exist.
 ## What v0.1 checks
 
 - JS/TS: `process.env.KEY` and `process.env["KEY"]`
+- JS/TS destructuring: `const { KEY } = process.env`
 - Python: `os.getenv("KEY")` and `os.environ["KEY"]`
 - Rust: `std::env::var("KEY")` and `env!("KEY")`
 - Missing keys in configured env manifests

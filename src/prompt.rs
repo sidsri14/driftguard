@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::{config::Config, env_scan::normalize_path};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptFailureKind {
     UnmappedChangedPrompt,
     MissingSchema,
@@ -231,4 +231,105 @@ fn is_prompt_like_path(path: &str) -> bool {
         && (normalized.starts_with("prompts/")
             || normalized.contains("/prompts/")
             || normalized.contains("prompt"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, fs, path::Path};
+
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::config::{Config, PromptContract};
+
+    #[test]
+    fn validates_golden_fixture_against_schema() {
+        let dir = tempdir().unwrap();
+        write_file(dir.path(), "src/prompts/router.md", "Return a route.");
+        write_file(
+            dir.path(),
+            "schemas/router.schema.json",
+            r#"{
+  "type": "object",
+  "required": ["destination"],
+  "properties": {
+    "destination": { "type": "string" }
+  },
+  "additionalProperties": false
+}"#,
+        );
+        write_file(
+            dir.path(),
+            "tests/golden/router/case_01.json",
+            r#"{ "destination": "support" }"#,
+        );
+
+        let failures = check_prompts(dir.path(), &router_config(), &[]);
+
+        assert!(failures.is_empty());
+    }
+
+    #[test]
+    fn reports_schema_violating_golden_fixture() {
+        let dir = tempdir().unwrap();
+        write_file(dir.path(), "src/prompts/router.md", "Return a route.");
+        write_file(
+            dir.path(),
+            "schemas/router.schema.json",
+            r#"{
+  "type": "object",
+  "required": ["destination"],
+  "properties": {
+    "destination": { "type": "string" }
+  },
+  "additionalProperties": false
+}"#,
+        );
+        write_file(
+            dir.path(),
+            "tests/golden/router/case_01.json",
+            r#"{ "route": "support" }"#,
+        );
+
+        let failures = check_prompts(dir.path(), &router_config(), &[]);
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].kind, PromptFailureKind::SchemaViolation);
+    }
+
+    #[test]
+    fn reports_changed_unmapped_prompt_when_since_is_used() {
+        let dir = tempdir().unwrap();
+        let failures = check_prompts(
+            dir.path(),
+            &router_config(),
+            &["src/prompts/new_router.md".to_string()],
+        );
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].kind, PromptFailureKind::UnmappedChangedPrompt);
+    }
+
+    fn router_config() -> Config {
+        let mut prompts = BTreeMap::new();
+        prompts.insert(
+            "router".to_string(),
+            PromptContract {
+                files: vec!["src/prompts/router.md".to_string()],
+                schema: "schemas/router.schema.json".to_string(),
+                golden: "tests/golden/router/*.json".to_string(),
+            },
+        );
+
+        Config {
+            env_files: vec![".env.example".to_string()],
+            prompts,
+        }
+    }
+
+    fn write_file(root: &Path, relative: &str, contents: &str) {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
 }
