@@ -136,8 +136,9 @@ pub fn scan_env_uses(
         let Ok(raw) = fs::read_to_string(path) else {
             continue;
         };
+        let scan_source = strip_comments(path, &raw);
 
-        for (line_index, line) in raw.lines().enumerate() {
+        for (line_index, line) in scan_source.lines().enumerate() {
             for pattern in &patterns {
                 for captures in pattern.captures_iter(line) {
                     uses.push(EnvUse {
@@ -150,7 +151,7 @@ pub fn scan_env_uses(
         }
 
         if is_javascript_like(path) {
-            uses.extend(scan_js_destructured_env(path, &raw));
+            uses.extend(scan_js_destructured_env(path, &scan_source));
         }
     }
 
@@ -244,6 +245,204 @@ fn is_javascript_like(path: &Path) -> bool {
         path.extension().and_then(|extension| extension.to_str()),
         Some("js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs")
     )
+}
+
+fn strip_comments(path: &Path, raw: &str) -> String {
+    if is_javascript_like(path)
+        || matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("rs")
+        )
+    {
+        strip_slash_comments(raw)
+    } else if matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("py")
+    ) {
+        strip_python_comments(raw)
+    } else {
+        raw.to_string()
+    }
+}
+
+fn strip_slash_comments(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = String::with_capacity(raw.len());
+    let mut index = 0;
+    let mut state = CommentState::Normal;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        let current = bytes[index] as char;
+        let next = bytes.get(index + 1).map(|byte| *byte as char);
+
+        match state {
+            CommentState::Normal => match (current, next) {
+                ('/', Some('/')) => {
+                    out.push(' ');
+                    out.push(' ');
+                    index += 2;
+                    state = CommentState::Line;
+                }
+                ('/', Some('*')) => {
+                    out.push(' ');
+                    out.push(' ');
+                    index += 2;
+                    state = CommentState::Block;
+                }
+                ('\'', _) => {
+                    out.push(current);
+                    index += 1;
+                    escaped = false;
+                    state = CommentState::SingleQuote;
+                }
+                ('"', _) => {
+                    out.push(current);
+                    index += 1;
+                    escaped = false;
+                    state = CommentState::DoubleQuote;
+                }
+                ('`', _) => {
+                    out.push(current);
+                    index += 1;
+                    escaped = false;
+                    state = CommentState::Backtick;
+                }
+                _ => {
+                    out.push(current);
+                    index += 1;
+                }
+            },
+            CommentState::Line => {
+                if current == '\n' {
+                    out.push('\n');
+                    state = CommentState::Normal;
+                } else {
+                    out.push(' ');
+                }
+                index += 1;
+            }
+            CommentState::Block => {
+                if current == '*' && next == Some('/') {
+                    out.push(' ');
+                    out.push(' ');
+                    index += 2;
+                    state = CommentState::Normal;
+                } else {
+                    out.push(if current == '\n' { '\n' } else { ' ' });
+                    index += 1;
+                }
+            }
+            CommentState::SingleQuote => {
+                out.push(current);
+                index += 1;
+                update_quote_state(current, &mut escaped, &mut state, CommentState::SingleQuote);
+            }
+            CommentState::DoubleQuote => {
+                out.push(current);
+                index += 1;
+                update_quote_state(current, &mut escaped, &mut state, CommentState::DoubleQuote);
+            }
+            CommentState::Backtick => {
+                out.push(current);
+                index += 1;
+                update_quote_state(current, &mut escaped, &mut state, CommentState::Backtick);
+            }
+        }
+    }
+
+    out
+}
+
+fn strip_python_comments(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = String::with_capacity(raw.len());
+    let mut index = 0;
+    let mut state = CommentState::Normal;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        let current = bytes[index] as char;
+
+        match state {
+            CommentState::Normal => match current {
+                '#' => {
+                    out.push(' ');
+                    index += 1;
+                    state = CommentState::Line;
+                }
+                '\'' => {
+                    out.push(current);
+                    index += 1;
+                    escaped = false;
+                    state = CommentState::SingleQuote;
+                }
+                '"' => {
+                    out.push(current);
+                    index += 1;
+                    escaped = false;
+                    state = CommentState::DoubleQuote;
+                }
+                _ => {
+                    out.push(current);
+                    index += 1;
+                }
+            },
+            CommentState::Line => {
+                if current == '\n' {
+                    out.push('\n');
+                    state = CommentState::Normal;
+                } else {
+                    out.push(' ');
+                }
+                index += 1;
+            }
+            CommentState::SingleQuote => {
+                out.push(current);
+                index += 1;
+                update_quote_state(current, &mut escaped, &mut state, CommentState::SingleQuote);
+            }
+            CommentState::DoubleQuote => {
+                out.push(current);
+                index += 1;
+                update_quote_state(current, &mut escaped, &mut state, CommentState::DoubleQuote);
+            }
+            CommentState::Block | CommentState::Backtick => {
+                out.push(current);
+                index += 1;
+            }
+        }
+    }
+
+    out
+}
+
+fn update_quote_state(
+    current: char,
+    escaped: &mut bool,
+    state: &mut CommentState,
+    quote_state: CommentState,
+) {
+    if *escaped {
+        *escaped = false;
+    } else if current == '\\' {
+        *escaped = true;
+    } else if matches!(quote_state, CommentState::SingleQuote) && current == '\''
+        || matches!(quote_state, CommentState::DoubleQuote) && current == '"'
+        || matches!(quote_state, CommentState::Backtick) && current == '`'
+    {
+        *state = CommentState::Normal;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CommentState {
+    Normal,
+    Line,
+    Block,
+    SingleQuote,
+    DoubleQuote,
+    Backtick,
 }
 
 fn is_ignored_dir(entry: &DirEntry, config: &Config) -> bool {
@@ -411,6 +610,62 @@ mod tests {
 
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].key, "DEEPSEEK_API_KEY");
+    }
+
+    #[test]
+    fn ignores_env_patterns_inside_js_and_rust_comments() {
+        let dir = tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "src/index.ts",
+            &[
+                "// const dead = process.",
+                "env.OLD_LEGACY_TOKEN;\nconst active = process.",
+                "env.ACTIVE_TOKEN;\n/*\nconst blockDead = process.",
+                "env.BLOCKED_TOKEN;\n*/\n",
+            ]
+            .concat(),
+        );
+        write_file(
+            dir.path(),
+            "src/main.rs",
+            &[
+                "// let dead = std::env::",
+                "var(\"OLD_RUST_TOKEN\");\nlet active = std::env::",
+                "var(\"ACTIVE_RUST_TOKEN\");\n/* let block_dead = ",
+                "env!(\"BLOCKED_RUST_TOKEN\"); */\n",
+            ]
+            .concat(),
+        );
+
+        let keys = keys_from_scan(dir.path());
+
+        assert!(keys.contains("ACTIVE_TOKEN"));
+        assert!(keys.contains("ACTIVE_RUST_TOKEN"));
+        assert!(!keys.contains("OLD_LEGACY_TOKEN"));
+        assert!(!keys.contains("BLOCKED_TOKEN"));
+        assert!(!keys.contains("OLD_RUST_TOKEN"));
+        assert!(!keys.contains("BLOCKED_RUST_TOKEN"));
+    }
+
+    #[test]
+    fn ignores_env_patterns_inside_python_comments() {
+        let dir = tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "src/app.py",
+            &[
+                "# token = os.",
+                "getenv(\"OLD_PY_TOKEN\")\ntoken = os.",
+                "getenv(\"ACTIVE_PY_TOKEN\")\nprint(\"# not a comment\")\n",
+            ]
+            .concat(),
+        );
+
+        let keys = keys_from_scan(dir.path());
+
+        assert!(keys.contains("ACTIVE_PY_TOKEN"));
+        assert!(!keys.contains("OLD_PY_TOKEN"));
     }
 
     fn keys_from_scan(root: &Path) -> BTreeSet<String> {

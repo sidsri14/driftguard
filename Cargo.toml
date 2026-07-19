@@ -1,8 +1,19 @@
 [package]
-name = "driftguard"
+name = "driftguard-cli"
 version = "0.2.0"
 edition = "2021"
 authors = ["sid <sid@driftguard.com>"]
+description = "Local-first CI guard for environment drift and AI prompt output contracts."
+license = "MIT"
+repository = "https://github.com/sidsri14/driftguard"
+homepage = "https://github.com/sidsri14/driftguard"
+readme = "README.md"
+keywords = ["ci", "env", "llm", "schema", "rust"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "driftguard"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }

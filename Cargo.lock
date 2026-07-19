@@ -208,7 +208,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "driftguard"
+name = "driftguard-cli"
 version = "0.2.0"
 dependencies = [
  "clap",

@@ -5,7 +5,7 @@ DriftGuard catches missing environment variables and broken AI output contracts 
 ## 30-second quickstart
 
 ```bash
-cargo install driftguard && driftguard init && driftguard check
+cargo install driftguard-cli && driftguard init && driftguard check
 ```
 
 For local development from this repository:
@@ -58,12 +58,14 @@ Use `--env-scope changed` with `--since` when you only want environment checks
 against changed source files. The default `--env-scope all` scans the configured
 source globs across the repository.
 
-## What v0.1 checks
+## What v0.2 checks
 
 - JS/TS: `process.env.KEY` and `process.env["KEY"]`
 - JS/TS destructuring: `const { KEY } = process.env`
 - Python: `os.getenv("KEY")` and `os.environ["KEY"]`
 - Rust: `std::env::var("KEY")` and `env!("KEY")`
+- JS/TS/Rust line and block comments are ignored during env scanning
+- Python line comments are ignored during env scanning
 - Missing keys in configured env manifests
 - Prompt golden fixtures that violate configured JSON schemas
 - Prompt template variables like `{{user_payload}}` missing from golden fixture inputs
@@ -99,7 +101,7 @@ validates `output` against the configured JSON Schema:
 The included `.github/workflows/driftguard.yml` validates this repository by
 installing the local crate with `cargo install --path .`. After DriftGuard is
 published, consumer repositories can replace that install step with
-`cargo install driftguard --locked`.
+`cargo install driftguard-cli --locked`.
 
 When using `driftguard check --since origin/main`, keep `fetch-depth: 0` on
 `actions/checkout@v4`. DriftGuard needs the base branch ref available locally to
