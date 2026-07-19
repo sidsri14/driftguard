@@ -175,6 +175,12 @@ Run the complete pass/fail demo from the repository root:
 ./scripts/demo.sh
 ```
 
+Play the recorded 30-second terminal session with asciinema:
+
+```bash
+asciinema play docs/demo.cast
+```
+
 ## Benchmarks
 
 Run the scanner benchmark locally:
