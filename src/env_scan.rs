@@ -51,10 +51,15 @@ pub fn check_env(
     changed_files: Option<&[String]>,
 ) -> Vec<EnvFailure> {
     let declared = read_env_manifest_keys(root, &config.env_files);
+    let ignored = config
+        .ignore_env_keys
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let mut failures_by_location = BTreeMap::new();
 
     for env_use in scan_env_uses(root, config, changed_files) {
-        if !declared.contains(&env_use.key) {
+        if !declared.contains(&env_use.key) && !ignored.contains(&env_use.key) {
             failures_by_location.insert(
                 (
                     normalize_path(root, &env_use.file),
@@ -137,13 +142,18 @@ pub fn scan_env_uses(
             continue;
         };
         let scan_source = strip_comments(path, &raw);
+        let suppressed_lines = suppression_lines(&raw, &scan_source);
 
         for (line_index, line) in scan_source.lines().enumerate() {
+            let line_number = line_index + 1;
+            if suppressed_lines.contains(&line_number) {
+                continue;
+            }
             for pattern in &patterns {
                 for captures in pattern.captures_iter(line) {
                     uses.push(EnvUse {
                         file: path.to_path_buf(),
-                        line: line_index + 1,
+                        line: line_number,
                         key: captures[1].to_string(),
                     });
                 }
@@ -151,11 +161,35 @@ pub fn scan_env_uses(
         }
 
         if is_javascript_like(path) {
-            uses.extend(scan_js_destructured_env(path, &scan_source));
+            uses.extend(
+                scan_js_destructured_env(path, &scan_source)
+                    .into_iter()
+                    .filter(|env_use| !suppressed_lines.contains(&env_use.line)),
+            );
         }
     }
 
     uses
+}
+
+fn suppression_lines(raw: &str, stripped: &str) -> BTreeSet<usize> {
+    let mut lines = BTreeSet::new();
+
+    for (index, (line, stripped_line)) in raw.lines().zip(stripped.lines()).enumerate() {
+        let line_number = index + 1;
+        let next_line_directive = line.contains("driftguard-ignore-next-line")
+            && !stripped_line.contains("driftguard-ignore-next-line");
+        let line_directive =
+            line.contains("driftguard-ignore") && !stripped_line.contains("driftguard-ignore");
+
+        if next_line_directive {
+            lines.insert(line_number + 1);
+        } else if line_directive {
+            lines.insert(line_number);
+        }
+    }
+
+    lines
 }
 
 fn scan_js_destructured_env(path: &Path, raw: &str) -> Vec<EnvUse> {
@@ -581,6 +615,7 @@ mod tests {
                 env_files: vec![".env.example".to_string()],
                 ignore_dirs: crate::config::default_ignore_dirs(),
                 source_globs: crate::config::default_source_globs(),
+                ignore_env_keys: Vec::new(),
                 prompts: Default::default(),
             },
             None,
@@ -668,6 +703,69 @@ mod tests {
         assert!(!keys.contains("OLD_PY_TOKEN"));
     }
 
+    #[test]
+    fn honors_inline_suppression_directives() {
+        let dir = tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "src/index.ts",
+            &[
+                "const local = process.",
+                "env.LOCAL_ONLY; // driftguard-ignore\n// driftguard-ignore-next-line\nconst generated = process.",
+                "env.GENERATED_KEY;\nconst active = process.",
+                "env.ACTIVE_KEY;\n",
+            ]
+            .concat(),
+        );
+
+        let keys = keys_from_scan(dir.path());
+
+        assert!(!keys.contains("LOCAL_ONLY"));
+        assert!(!keys.contains("GENERATED_KEY"));
+        assert!(keys.contains("ACTIVE_KEY"));
+    }
+
+    #[test]
+    fn honors_configured_ignored_env_keys() {
+        let dir = tempdir().unwrap();
+        write_file(dir.path(), ".env.example", "DATABASE_URL=\n");
+        write_file(
+            dir.path(),
+            "src/index.ts",
+            &[
+                "const local = process.",
+                "env.LOCAL_ONLY;\nconst missing = process.",
+                "env.REQUIRED_KEY;\n",
+            ]
+            .concat(),
+        );
+        let mut config = test_config();
+        config.ignore_env_keys = vec!["LOCAL_ONLY".to_string()];
+
+        let failures = check_env(dir.path(), &config, None);
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].key, "REQUIRED_KEY");
+    }
+
+    #[test]
+    fn does_not_treat_string_contents_as_suppression_directives() {
+        let dir = tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "src/index.ts",
+            &[
+                "const marker = \"driftguard-ignore\"; const active = process.",
+                "env.ACTIVE_KEY;\n",
+            ]
+            .concat(),
+        );
+
+        let keys = keys_from_scan(dir.path());
+
+        assert!(keys.contains("ACTIVE_KEY"));
+    }
+
     fn keys_from_scan(root: &Path) -> BTreeSet<String> {
         scan_env_uses(root, &test_config(), None)
             .into_iter()
@@ -680,6 +778,7 @@ mod tests {
             env_files: vec![".env.example".to_string()],
             ignore_dirs: crate::config::default_ignore_dirs(),
             source_globs: crate::config::default_source_globs(),
+            ignore_env_keys: Vec::new(),
             prompts: Default::default(),
         }
     }

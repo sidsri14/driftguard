@@ -443,6 +443,7 @@ mod tests {
             env_files: vec![".env.example".to_string()],
             ignore_dirs: crate::config::default_ignore_dirs(),
             source_globs: crate::config::default_source_globs(),
+            ignore_env_keys: Vec::new(),
             prompts,
         }
     }

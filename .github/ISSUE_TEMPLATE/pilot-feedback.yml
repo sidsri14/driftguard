@@ -1,0 +1,55 @@
+name: Pilot feedback
+description: Share setup friction, false positives, and contract failures caught by DriftGuard.
+title: "[Pilot] "
+labels:
+  - pilot-feedback
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for testing DriftGuard. Do not include secret values or private source code.
+  - type: input
+    id: version
+    attributes:
+      label: DriftGuard version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where did it run?
+      options:
+        - Local terminal
+        - Pre-commit hook
+        - GitHub Actions
+        - Other CI
+    validations:
+      required: true
+  - type: input
+    id: setup-time
+    attributes:
+      label: Approximate setup time
+      placeholder: "5 minutes"
+    validations:
+      required: true
+  - type: textarea
+    id: caught
+    attributes:
+      label: What did DriftGuard catch?
+      description: Describe the missing key or broken contract without pasting sensitive values.
+  - type: textarea
+    id: false-positives
+    attributes:
+      label: False positives or suppressions needed
+  - type: textarea
+    id: friction
+    attributes:
+      label: Setup or CI friction
+  - type: dropdown
+    id: pay
+    attributes:
+      label: Would this be valuable to your team as a maintained CI control?
+      options:
+        - Yes
+        - Maybe
+        - No

@@ -2,23 +2,26 @@
 
 DriftGuard catches missing environment variables and broken AI output contracts before merge.
 
+See the [engineering case study](docs/portfolio-case-study.md) for architecture,
+validation evidence, scope boundaries, and a resume-ready project summary.
+
 ## 30-second quickstart
 
 ```bash
-cargo install driftguard-cli && driftguard init && driftguard check
+cargo install --git https://github.com/sidsri14/driftguard --locked && driftguard init && driftguard doctor && driftguard check
 ```
 
-For local development from this repository:
+After the package is published to crates.io, the install command becomes:
+
+```bash
+cargo install driftguard-cli --locked
+```
+
+For development from this repository:
 
 ```bash
 cargo run -- init
 cargo run -- check
-```
-
-Install directly from GitHub before a crates.io release:
-
-```bash
-cargo install --git https://github.com/sidsri14/driftguard --locked
 ```
 
 ## Commands
@@ -29,6 +32,9 @@ driftguard check
 driftguard check --since origin/main
 driftguard check --since origin/main --env-scope changed
 driftguard check --since origin/main --markdown
+driftguard check --json
+driftguard doctor
+driftguard doctor --json
 driftguard install-hook
 ```
 
@@ -40,25 +46,62 @@ driftguard install-hook
 env_files = [".env.example"]
 ignore_dirs = [".git", "node_modules", "target", "dist", "build", ".next", ".venv", "__pycache__"]
 source_globs = ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.mjs", "**/*.cjs", "**/*.py", "**/*.rs"]
+ignore_env_keys = []
+```
 
+Add prompt contracts as needed:
+
+```toml
 [prompts.router]
 files = ["src/prompts/router.md"]
 schema = "schemas/router.schema.json"
 golden = "tests/golden/router/*.json"
-
-[prompts.extractor]
-files = ["src/prompts/extraction_v2.md"]
-schema = "schemas/extraction.schema.json"
-golden = "tests/golden/extractor/*.json"
 ```
 
-Prompt contracts are active only when their mapped prompt files exist.
+`driftguard init` starts with no prompt mappings. Add a contract block like the
+router example when the project has a prompt output schema. Prompt contracts
+are active only when their mapped prompt files exist.
 
 Use `--env-scope changed` with `--since` when you only want environment checks
 against changed source files. The default `--env-scope all` scans the configured
 source globs across the repository.
 
-## What v0.2 checks
+## False-positive controls
+
+Ignore a known non-deployment key across the project:
+
+```toml
+ignore_env_keys = ["LOCAL_DEV_ONLY"]
+```
+
+Suppress a single source line or the next line when generated or dynamic code
+cannot be represented in an env manifest:
+
+```ts
+const local = process.env.LOCAL_DEV_ONLY; // driftguard-ignore
+
+// driftguard-ignore-next-line
+const generated = process.env.GENERATED_KEY;
+```
+
+Keep suppressions narrow and reviewable. Commented-out code is ignored
+automatically for supported JS/TS, Rust, and Python files.
+
+## Machine-readable reports
+
+`driftguard check --json` writes a versioned JSON document to stdout and keeps
+the same exit codes as terminal output:
+
+- `0`: contracts passed
+- `1`: drift was detected
+- `2`: DriftGuard could not execute the check
+
+The top-level `format_version` is currently `1`. CI integrations should check
+that value before consuming `environment` or `prompts` failures.
+Execution failures use `verdict: "error"` and include an `error` string, so
+stdout remains valid JSON for exit code `2`.
+
+## What v0.3 checks
 
 - JS/TS: `process.env.KEY` and `process.env["KEY"]`
 - JS/TS destructuring: `const { KEY } = process.env`
@@ -70,6 +113,8 @@ source globs across the repository.
 - Prompt golden fixtures that violate configured JSON schemas
 - Prompt template variables like `{{user_payload}}` missing from golden fixture inputs
 - Changed prompt markdown files without mapped contracts when `--since` is used
+- Project-wide and line-level env scan suppressions
+- Configuration health through `driftguard doctor`
 
 ## Golden fixtures
 
@@ -111,6 +156,7 @@ The repo also includes:
 
 - `.github/workflows/driftguard.yml` for normal CI validation
 - `.github/workflows/driftguard-pr-comment.yml` for posting/updating PR comments
+- `.github/workflows/quality.yml` for Linux, macOS, and Windows tests
 - `.github/workflows/release.yml` for tag-based release binaries
 
 ## Examples
@@ -120,3 +166,37 @@ See `examples/broken-ai-app` for a compact app that demonstrates:
 - missing environment variable detection
 - prompt template input coverage
 - prompt output JSON Schema validation
+
+Run the complete pass/fail demo from the repository root:
+
+```powershell
+.\scripts\demo.ps1
+```
+
+```bash
+./scripts/demo.sh
+```
+
+Play the recorded 30-second terminal session with asciinema:
+
+```bash
+asciinema play docs/demo.cast
+```
+
+## Benchmarks
+
+Run the scanner benchmark locally:
+
+```bash
+cargo bench --bench env_scan
+```
+
+The benchmark generates 500 TypeScript files and measures the same scanner used
+by the CLI. Performance depends on the machine and filesystem, so DriftGuard
+does not claim a fixed scan time.
+
+## Scope
+
+DriftGuard validates deterministic contracts. It does not predict LLM quality,
+execute prompts against model providers, inspect secret values, or replace a
+language-specific compiler or security scanner.
