@@ -1,12 +1,7 @@
-mod config;
-mod env_scan;
-mod git;
-mod prompt;
-mod report;
-
 use std::{env, fs, process};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use driftguard_cli::{config, doctor, env_scan, git, prompt, report};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -34,8 +29,18 @@ enum Commands {
         env_scope: EnvScope,
 
         /// Print a GitHub PR friendly Markdown report.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "json")]
         markdown: bool,
+
+        /// Print a stable machine-readable JSON report.
+        #[arg(long, conflicts_with = "markdown")]
+        json: bool,
+    },
+    /// Diagnose configuration, prompt mappings, manifests, and Git availability.
+    Doctor {
+        /// Print the diagnostic report as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Install DriftGuard as a local git pre-commit hook.
     InstallHook {
@@ -76,8 +81,10 @@ fn run() -> Result<(), String> {
             since,
             env_scope,
             markdown,
+            json,
         } => {
             let config = config::load_config(&root)?;
+            config::validate_runtime(&root, &config)?;
             let changed_files = match since {
                 Some(ref base) => git::changed_files(&root, base)?,
                 None => Vec::new(),
@@ -91,11 +98,25 @@ fn run() -> Result<(), String> {
             let env_failures = env_scan::check_env(&root, &config, env_changed_files);
             let prompt_changed_files = since.as_ref().map(|_| changed_files.as_slice());
             let prompt_failures = prompt::check_prompts(&root, &config, prompt_changed_files);
+            let format = if json {
+                report::ReportFormat::Json
+            } else if markdown {
+                report::ReportFormat::Markdown
+            } else {
+                report::ReportFormat::Terminal
+            };
 
             if env_failures.is_empty() && prompt_failures.is_empty() {
-                report::print_success();
+                report::print_success(format);
             } else {
-                report::print_failures(&root, &env_failures, &prompt_failures, markdown);
+                report::print_failures(&root, &env_failures, &prompt_failures, format);
+                process::exit(1);
+            }
+        }
+        Commands::Doctor { json } => {
+            let report = doctor::inspect(&root);
+            doctor::print(&report, json);
+            if report.has_failures() {
                 process::exit(1);
             }
         }

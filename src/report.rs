@@ -1,19 +1,65 @@
 use std::path::Path;
 
+use serde::Serialize;
+
 use crate::{
     env_scan::{normalize_path, EnvFailure},
     prompt::{PromptFailure, PromptFailureKind},
 };
 
-pub fn print_success() {
-    println!("OK: Deployment contracts passed.");
+#[derive(Debug, Clone, Copy)]
+pub enum ReportFormat {
+    Terminal,
+    Markdown,
+    Json,
 }
 
-pub fn print_failures(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure], markdown: bool) {
-    if markdown {
-        print_markdown(root, env, prompts);
-    } else {
-        print_terminal(root, env, prompts);
+#[derive(Serialize)]
+struct JsonReport {
+    format_version: u8,
+    verdict: &'static str,
+    environment: Vec<JsonEnvFailure>,
+    prompts: Vec<JsonPromptFailure>,
+}
+
+#[derive(Serialize)]
+struct JsonEnvFailure {
+    file: String,
+    line: usize,
+    key: String,
+    env_files: String,
+}
+
+#[derive(Serialize)]
+struct JsonPromptFailure {
+    kind: &'static str,
+    file: Option<String>,
+    contract: Option<String>,
+    schema: Option<String>,
+    fixture: Option<String>,
+    reason: String,
+}
+
+pub fn print_success(format: ReportFormat) {
+    match format {
+        ReportFormat::Terminal => println!("OK: Deployment contracts passed."),
+        ReportFormat::Markdown => {
+            println!("## DriftGuard Report\n\n**Verdict:** Passed");
+        }
+        ReportFormat::Json => print_json(Path::new("."), &[], &[], "passed"),
+    }
+}
+
+pub fn print_failures(
+    root: &Path,
+    env: &[EnvFailure],
+    prompts: &[PromptFailure],
+    format: ReportFormat,
+) {
+    match format {
+        ReportFormat::Terminal => print_terminal(root, env, prompts),
+        ReportFormat::Markdown => print_markdown(root, env, prompts),
+        ReportFormat::Json => print_json(root, env, prompts, "failed"),
     }
 }
 
@@ -78,8 +124,9 @@ fn print_markdown(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure]) {
         println!("| --- | --- | --- |");
         for failure in env {
             println!(
-                "| `{}` | `{}` | Add `{}=` to `{}` |",
-                format!("{}:{}", normalize_path(root, &failure.file), failure.line),
+                "| `{}:{}` | `{}` | Add `{}=` to `{}` |",
+                normalize_path(root, &failure.file),
+                failure.line,
                 failure.key,
                 failure.key,
                 failure.env_file
@@ -113,6 +160,56 @@ fn print_markdown(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure]) {
                 failure.reason.replace('|', "\\|")
             );
         }
+    }
+}
+
+fn print_json(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure], verdict: &'static str) {
+    let report = JsonReport {
+        format_version: 1,
+        verdict,
+        environment: env
+            .iter()
+            .map(|failure| JsonEnvFailure {
+                file: normalize_path(root, &failure.file),
+                line: failure.line,
+                key: failure.key.clone(),
+                env_files: failure.env_file.clone(),
+            })
+            .collect(),
+        prompts: prompts
+            .iter()
+            .map(|failure| JsonPromptFailure {
+                kind: prompt_kind_code(&failure.kind),
+                file: failure.file.as_ref().map(|path| normalize_path(root, path)),
+                contract: failure.contract.clone(),
+                schema: failure
+                    .schema
+                    .as_ref()
+                    .map(|path| normalize_path(root, path)),
+                fixture: failure
+                    .fixture
+                    .as_ref()
+                    .map(|path| normalize_path(root, path)),
+                reason: failure.reason.clone(),
+            })
+            .collect(),
+    };
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("DriftGuard report should serialize")
+    );
+}
+
+fn prompt_kind_code(kind: &PromptFailureKind) -> &'static str {
+    match kind {
+        PromptFailureKind::UnmappedChangedPrompt => "unmapped_changed_prompt",
+        PromptFailureKind::MissingSchema => "missing_schema",
+        PromptFailureKind::MissingGoldenFixtures => "missing_golden_fixtures",
+        PromptFailureKind::InvalidGoldenJson => "invalid_golden_json",
+        PromptFailureKind::SchemaViolation => "schema_violation",
+        PromptFailureKind::InvalidSchema => "invalid_schema",
+        PromptFailureKind::MissingTemplateInput => "missing_template_input",
     }
 }
 

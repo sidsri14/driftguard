@@ -1,6 +1,6 @@
 [package]
 name = "driftguard-cli"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["sid <sid@driftguard.com>"]
 description = "Local-first CI guard for environment drift and AI prompt output contracts."
@@ -26,4 +26,9 @@ jsonschema = "0.18"
 glob = "0.3"
 
 [dev-dependencies]
+criterion = "0.8"
 tempfile = "3"
+
+[[bench]]
+name = "env_scan"
+harness = false
