@@ -1,4 +1,6 @@
 env_files = [".env.example"]
+ignore_dirs = [".git", "node_modules", "target", "dist", "build", ".next", ".venv", "__pycache__"]
+source_globs = ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx", "src/**/*.mjs", "src/**/*.cjs", "src/**/*.py", "src/**/*.rs"]
 
 [prompts.extractor]
 files = ["src/prompts/extraction_v2.md"]

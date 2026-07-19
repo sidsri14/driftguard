@@ -1,0 +1,9 @@
+{
+  "input": {
+    "user_payload": "Need help with billing",
+    "customer_tier": "pro"
+  },
+  "output": {
+    "destination": "support"
+  }
+}

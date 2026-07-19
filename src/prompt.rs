@@ -97,11 +97,15 @@ pub fn validate_template_inputs(
     }
 }
 
-pub fn check_prompts(root: &Path, config: &Config, changed_files: &[String]) -> Vec<PromptFailure> {
+pub fn check_prompts(
+    root: &Path,
+    config: &Config,
+    changed_files: Option<&[String]>,
+) -> Vec<PromptFailure> {
     let mut failures = Vec::new();
     let contracts = resolve_contract_files(root, config);
 
-    if !changed_files.is_empty() {
+    if let Some(changed_files) = changed_files {
         let mapped_files: BTreeSet<String> = contracts
             .values()
             .flat_map(|files| files.iter().cloned())
@@ -122,10 +126,12 @@ pub fn check_prompts(root: &Path, config: &Config, changed_files: &[String]) -> 
     }
 
     for (name, contract) in &config.prompts {
-        let changed_contract = changed_files.is_empty()
-            || contracts
+        let changed_contract = match changed_files {
+            Some(changed_files) => contracts
                 .get(name)
-                .is_some_and(|files| files.iter().any(|file| changed_files.contains(file)));
+                .is_some_and(|files| files.iter().any(|file| changed_files.contains(file))),
+            None => true,
+        };
 
         if changed_contract {
             failures.extend(validate_contract(root, name, contract));
@@ -306,7 +312,7 @@ mod tests {
             r#"{ "destination": "support" }"#,
         );
 
-        let failures = check_prompts(dir.path(), &router_config(), &[]);
+        let failures = check_prompts(dir.path(), &router_config(), None);
 
         assert!(failures.is_empty());
     }
@@ -333,7 +339,7 @@ mod tests {
             r#"{ "route": "support" }"#,
         );
 
-        let failures = check_prompts(dir.path(), &router_config(), &[]);
+        let failures = check_prompts(dir.path(), &router_config(), None);
 
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].kind, PromptFailureKind::SchemaViolation);
@@ -368,7 +374,7 @@ mod tests {
 }"#,
         );
 
-        let failures = check_prompts(dir.path(), &router_config(), &[]);
+        let failures = check_prompts(dir.path(), &router_config(), None);
 
         assert!(failures.is_empty());
     }
@@ -402,7 +408,7 @@ mod tests {
 }"#,
         );
 
-        let failures = check_prompts(dir.path(), &router_config(), &[]);
+        let failures = check_prompts(dir.path(), &router_config(), None);
 
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].kind, PromptFailureKind::MissingTemplateInput);
@@ -415,7 +421,7 @@ mod tests {
         let failures = check_prompts(
             dir.path(),
             &router_config(),
-            &["src/prompts/new_router.md".to_string()],
+            Some(&["src/prompts/new_router.md".to_string()]),
         );
 
         assert_eq!(failures.len(), 1);
@@ -435,6 +441,8 @@ mod tests {
 
         Config {
             env_files: vec![".env.example".to_string()],
+            ignore_dirs: crate::config::default_ignore_dirs(),
+            source_globs: crate::config::default_source_globs(),
             prompts,
         }
     }

@@ -1,0 +1,8 @@
+{
+  "input": {
+    "user_payload": "Need help with billing"
+  },
+  "output": {
+    "route": "support"
+  }
+}

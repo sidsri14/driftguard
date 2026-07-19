@@ -4,9 +4,9 @@ mod git;
 mod prompt;
 mod report;
 
-use std::{env, process};
+use std::{env, fs, process};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -29,10 +29,26 @@ enum Commands {
         #[arg(long)]
         since: Option<String>,
 
+        /// Environment scan scope. Use `changed` with --since to scan only changed source files.
+        #[arg(long, value_enum, default_value_t = EnvScope::All)]
+        env_scope: EnvScope,
+
         /// Print a GitHub PR friendly Markdown report.
         #[arg(long)]
         markdown: bool,
     },
+    /// Install DriftGuard as a local git pre-commit hook.
+    InstallHook {
+        /// Overwrite an existing pre-commit hook.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum EnvScope {
+    All,
+    Changed,
 }
 
 fn main() {
@@ -56,15 +72,25 @@ fn run() -> Result<(), String> {
                 println!("driftguard.toml already exists");
             }
         }
-        Commands::Check { since, markdown } => {
+        Commands::Check {
+            since,
+            env_scope,
+            markdown,
+        } => {
             let config = config::load_config(&root)?;
             let changed_files = match since {
                 Some(ref base) => git::changed_files(&root, base)?,
                 None => Vec::new(),
             };
+            if matches!(env_scope, EnvScope::Changed) && since.is_none() {
+                return Err("`--env-scope changed` requires `--since`.".to_string());
+            }
 
-            let env_failures = env_scan::check_env(&root, &config);
-            let prompt_failures = prompt::check_prompts(&root, &config, &changed_files);
+            let env_changed_files =
+                matches!(env_scope, EnvScope::Changed).then_some(changed_files.as_slice());
+            let env_failures = env_scan::check_env(&root, &config, env_changed_files);
+            let prompt_changed_files = since.as_ref().map(|_| changed_files.as_slice());
+            let prompt_failures = prompt::check_prompts(&root, &config, prompt_changed_files);
 
             if env_failures.is_empty() && prompt_failures.is_empty() {
                 report::print_success();
@@ -73,7 +99,43 @@ fn run() -> Result<(), String> {
                 process::exit(1);
             }
         }
+        Commands::InstallHook { force } => install_hook(&root, force)?,
     }
 
+    Ok(())
+}
+
+fn install_hook(root: &std::path::Path, force: bool) -> Result<(), String> {
+    let git_dir = root.join(".git");
+    if !git_dir.is_dir() {
+        return Err("not a git repository: .git directory was not found".to_string());
+    }
+
+    let hooks_dir = git_dir.join("hooks");
+    fs::create_dir_all(&hooks_dir)
+        .map_err(|err| format!("failed to create git hooks dir: {err}"))?;
+    let hook_path = hooks_dir.join("pre-commit");
+    if hook_path.exists() && !force {
+        return Err("pre-commit hook already exists. Re-run with `driftguard install-hook --force` to overwrite it.".to_string());
+    }
+
+    fs::write(&hook_path, "#!/bin/sh\nset -eu\n\ndriftguard check\n")
+        .map_err(|err| format!("failed to write pre-commit hook: {err}"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&hook_path)
+            .map_err(|err| format!("failed to stat pre-commit hook: {err}"))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&hook_path, permissions)
+            .map_err(|err| format!("failed to mark pre-commit hook executable: {err}"))?;
+    }
+
+    println!(
+        "Installed DriftGuard pre-commit hook at {}",
+        hook_path.display()
+    );
     Ok(())
 }

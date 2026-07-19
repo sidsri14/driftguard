@@ -15,13 +15,21 @@ cargo run -- init
 cargo run -- check
 ```
 
+Install directly from GitHub before a crates.io release:
+
+```bash
+cargo install --git https://github.com/sidsri14/driftguard --locked
+```
+
 ## Commands
 
 ```bash
 driftguard init
 driftguard check
 driftguard check --since origin/main
+driftguard check --since origin/main --env-scope changed
 driftguard check --since origin/main --markdown
+driftguard install-hook
 ```
 
 ## Configuration
@@ -30,6 +38,8 @@ driftguard check --since origin/main --markdown
 
 ```toml
 env_files = [".env.example"]
+ignore_dirs = [".git", "node_modules", "target", "dist", "build", ".next", ".venv", "__pycache__"]
+source_globs = ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.mjs", "**/*.cjs", "**/*.py", "**/*.rs"]
 
 [prompts.router]
 files = ["src/prompts/router.md"]
@@ -43,6 +53,10 @@ golden = "tests/golden/extractor/*.json"
 ```
 
 Prompt contracts are active only when their mapped prompt files exist.
+
+Use `--env-scope changed` with `--since` when you only want environment checks
+against changed source files. The default `--env-scope all` scans the configured
+source globs across the repository.
 
 ## What v0.1 checks
 
@@ -90,3 +104,17 @@ published, consumer repositories can replace that install step with
 When using `driftguard check --since origin/main`, keep `fetch-depth: 0` on
 `actions/checkout@v4`. DriftGuard needs the base branch ref available locally to
 compute changed prompt files.
+
+The repo also includes:
+
+- `.github/workflows/driftguard.yml` for normal CI validation
+- `.github/workflows/driftguard-pr-comment.yml` for posting/updating PR comments
+- `.github/workflows/release.yml` for tag-based release binaries
+
+## Examples
+
+See `examples/broken-ai-app` for a compact app that demonstrates:
+
+- missing environment variable detection
+- prompt template input coverage
+- prompt output JSON Schema validation

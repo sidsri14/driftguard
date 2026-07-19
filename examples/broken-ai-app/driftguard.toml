@@ -1,0 +1,8 @@
+env_files = [".env.example"]
+ignore_dirs = [".git", "node_modules", "target", "dist", "build", ".next", ".venv", "__pycache__"]
+source_globs = ["src/**/*.ts"]
+
+[prompts.router]
+files = ["src/prompts/router.md"]
+schema = "schemas/router.schema.json"
+golden = "tests/golden/router/*.json"

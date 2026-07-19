@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use glob::Pattern;
 use regex::Regex;
 use walkdir::{DirEntry, WalkDir};
 
@@ -44,11 +45,15 @@ pub struct EnvFailure {
     pub env_file: String,
 }
 
-pub fn check_env(root: &Path, config: &Config) -> Vec<EnvFailure> {
+pub fn check_env(
+    root: &Path,
+    config: &Config,
+    changed_files: Option<&[String]>,
+) -> Vec<EnvFailure> {
     let declared = read_env_manifest_keys(root, &config.env_files);
     let mut failures_by_location = BTreeMap::new();
 
-    for env_use in scan_env_uses(root) {
+    for env_use in scan_env_uses(root, config, changed_files) {
         if !declared.contains(&env_use.key) {
             failures_by_location.insert(
                 (
@@ -94,18 +99,37 @@ fn read_env_manifest_keys(root: &Path, env_files: &[String]) -> BTreeSet<String>
     keys
 }
 
-fn scan_env_uses(root: &Path) -> Vec<EnvUse> {
+pub fn scan_env_uses(
+    root: &Path,
+    config: &Config,
+    changed_files: Option<&[String]>,
+) -> Vec<EnvUse> {
     let patterns = env_patterns();
+    let source_globs = compile_source_globs(config);
     let mut uses = Vec::new();
+    let changed_set = changed_files.map(|files| {
+        files
+            .iter()
+            .map(|file| file.replace('\\', "/"))
+            .collect::<BTreeSet<_>>()
+    });
 
     for entry in WalkDir::new(root)
         .into_iter()
-        .filter_entry(|entry| !is_ignored_dir(entry))
+        .filter_entry(|entry| !is_ignored_dir(entry, config))
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
     {
         let path = entry.path();
-        if !is_supported_source(path) {
+        let normalized = normalize_path(root, path);
+        if changed_set
+            .as_ref()
+            .is_some_and(|files| !files.contains(&normalized))
+        {
+            continue;
+        }
+
+        if !is_supported_source(&normalized, &source_globs) {
             continue;
         }
 
@@ -201,12 +225,18 @@ fn env_patterns() -> Vec<Regex> {
     .collect()
 }
 
-fn is_supported_source(path: &Path) -> bool {
-    is_javascript_like(path)
-        || matches!(
-            path.extension().and_then(|extension| extension.to_str()),
-            Some("py" | "rs")
-        )
+fn compile_source_globs(config: &Config) -> Vec<Pattern> {
+    config
+        .source_globs
+        .iter()
+        .filter_map(|pattern| Pattern::new(&pattern.replace('\\', "/")).ok())
+        .collect()
+}
+
+fn is_supported_source(normalized_path: &str, source_globs: &[Pattern]) -> bool {
+    source_globs
+        .iter()
+        .any(|pattern| pattern.matches(normalized_path))
 }
 
 fn is_javascript_like(path: &Path) -> bool {
@@ -216,12 +246,11 @@ fn is_javascript_like(path: &Path) -> bool {
     )
 }
 
-fn is_ignored_dir(entry: &DirEntry) -> bool {
+fn is_ignored_dir(entry: &DirEntry, config: &Config) -> bool {
     entry.file_type().is_dir()
-        && entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| IGNORED_DIRS.contains(&name))
+        && entry.file_name().to_str().is_some_and(|name| {
+            IGNORED_DIRS.contains(&name) || config.ignore_dirs.iter().any(|ignored| ignored == name)
+        })
 }
 
 pub fn normalize_path(root: &Path, path: &Path) -> String {
@@ -351,19 +380,53 @@ mod tests {
             dir.path(),
             &Config {
                 env_files: vec![".env.example".to_string()],
+                ignore_dirs: crate::config::default_ignore_dirs(),
+                source_globs: crate::config::default_source_globs(),
                 prompts: Default::default(),
             },
+            None,
         );
 
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].key, "DEEPSEEK_API_KEY");
     }
 
+    #[test]
+    fn can_scope_env_scan_to_changed_files() {
+        let dir = tempdir().unwrap();
+        write_file(dir.path(), ".env.example", "DATABASE_URL=\n");
+        write_file(
+            dir.path(),
+            "src/changed.ts",
+            &["const used = process.", "env.DEEPSEEK_API_KEY;"].concat(),
+        );
+        write_file(
+            dir.path(),
+            "src/unchanged.ts",
+            &["const ignored = process.", "env.OPENAI_API_KEY;"].concat(),
+        );
+
+        let changed = vec!["src/changed.ts".to_string()];
+        let failures = check_env(dir.path(), &test_config(), Some(&changed));
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].key, "DEEPSEEK_API_KEY");
+    }
+
     fn keys_from_scan(root: &Path) -> BTreeSet<String> {
-        scan_env_uses(root)
+        scan_env_uses(root, &test_config(), None)
             .into_iter()
             .map(|env_use| env_use.key)
             .collect()
+    }
+
+    fn test_config() -> Config {
+        Config {
+            env_files: vec![".env.example".to_string()],
+            ignore_dirs: crate::config::default_ignore_dirs(),
+            source_globs: crate::config::default_source_globs(),
+            prompts: Default::default(),
+        }
     }
 
     fn write_file(root: &Path, relative: &str, contents: &str) {

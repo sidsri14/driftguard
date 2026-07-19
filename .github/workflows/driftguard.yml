@@ -21,7 +21,7 @@ jobs:
 
       - name: Check deployment contracts
         if: github.event_name == 'pull_request'
-        run: driftguard check --since origin/${{ github.base_ref }} --markdown
+        run: driftguard check --since origin/${{ github.base_ref }} --env-scope changed --markdown
 
       - name: Check deployment contracts
         if: github.event_name != 'pull_request'

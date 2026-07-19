@@ -27,8 +27,8 @@ fn git_ref_exists(root: &Path, git_ref: &str) -> bool {
     Command::new("git")
         .current_dir(root)
         .args(["rev-parse", "--verify", "--quiet", git_ref])
-        .status()
-        .is_ok_and(|status| status.success())
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 fn is_shallow_repository(root: &Path) -> bool {

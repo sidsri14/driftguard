@@ -8,6 +8,10 @@ pub const CONFIG_FILE: &str = "driftguard.toml";
 pub struct Config {
     #[serde(default = "default_env_files")]
     pub env_files: Vec<String>,
+    #[serde(default = "default_ignore_dirs")]
+    pub ignore_dirs: Vec<String>,
+    #[serde(default = "default_source_globs")]
+    pub source_globs: Vec<String>,
     #[serde(default)]
     pub prompts: BTreeMap<String, PromptContract>,
 }
@@ -41,6 +45,8 @@ impl Default for Config {
 
         Self {
             env_files: default_env_files(),
+            ignore_dirs: default_ignore_dirs(),
+            source_globs: default_source_globs(),
             prompts,
         }
     }
@@ -48,6 +54,31 @@ impl Default for Config {
 
 pub fn default_env_files() -> Vec<String> {
     vec![".env.example".to_string()]
+}
+
+pub fn default_ignore_dirs() -> Vec<String> {
+    [
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        ".next",
+        ".venv",
+        "__pycache__",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
+pub fn default_source_globs() -> Vec<String> {
+    [
+        "**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.mjs", "**/*.cjs", "**/*.py", "**/*.rs",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 
 pub fn init_config(root: &Path) -> io::Result<bool> {
