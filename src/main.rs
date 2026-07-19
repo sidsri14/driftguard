@@ -57,14 +57,29 @@ enum EnvScope {
 }
 
 fn main() {
-    if let Err(err) = run() {
-        eprintln!("Error: {err}");
+    let cli = Cli::parse();
+    let json = cli.wants_json();
+
+    if let Err(err) = run(cli) {
+        if json {
+            report::print_execution_error(&err);
+        } else {
+            eprintln!("Error: {err}");
+        }
         process::exit(2);
     }
 }
 
-fn run() -> Result<(), String> {
-    let cli = Cli::parse();
+impl Cli {
+    fn wants_json(&self) -> bool {
+        match &self.command {
+            Commands::Check { json, .. } | Commands::Doctor { json } => *json,
+            Commands::Init | Commands::InstallHook { .. } => false,
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<(), String> {
     let root = env::current_dir().map_err(|err| format!("failed to read cwd: {err}"))?;
 
     match cli.command {

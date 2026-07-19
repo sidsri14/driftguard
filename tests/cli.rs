@@ -124,12 +124,18 @@ fn check_rejects_missing_configured_manifest() {
 
     let output = driftguard()
         .current_dir(dir.path())
-        .arg("check")
+        .args(["check", "--json"])
         .output()
         .unwrap();
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("configured env manifest"));
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["verdict"], "error");
+    assert!(report["error"]
+        .as_str()
+        .unwrap()
+        .contains("configured env manifest"));
 }
 
 #[test]

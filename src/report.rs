@@ -18,6 +18,8 @@ pub enum ReportFormat {
 struct JsonReport {
     format_version: u8,
     verdict: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
     environment: Vec<JsonEnvFailure>,
     prompts: Vec<JsonPromptFailure>,
 }
@@ -46,7 +48,7 @@ pub fn print_success(format: ReportFormat) {
         ReportFormat::Markdown => {
             println!("## DriftGuard Report\n\n**Verdict:** Passed");
         }
-        ReportFormat::Json => print_json(Path::new("."), &[], &[], "passed"),
+        ReportFormat::Json => print_json(Path::new("."), &[], &[], "passed", None),
     }
 }
 
@@ -59,8 +61,12 @@ pub fn print_failures(
     match format {
         ReportFormat::Terminal => print_terminal(root, env, prompts),
         ReportFormat::Markdown => print_markdown(root, env, prompts),
-        ReportFormat::Json => print_json(root, env, prompts, "failed"),
+        ReportFormat::Json => print_json(root, env, prompts, "failed", None),
     }
+}
+
+pub fn print_execution_error(error: &str) {
+    print_json(Path::new("."), &[], &[], "error", Some(error));
 }
 
 fn print_terminal(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure]) {
@@ -163,10 +169,17 @@ fn print_markdown(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure]) {
     }
 }
 
-fn print_json(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure], verdict: &'static str) {
+fn print_json(
+    root: &Path,
+    env: &[EnvFailure],
+    prompts: &[PromptFailure],
+    verdict: &'static str,
+    error: Option<&str>,
+) {
     let report = JsonReport {
         format_version: 1,
         verdict,
+        error: error.map(String::from),
         environment: env
             .iter()
             .map(|failure| JsonEnvFailure {

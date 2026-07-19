@@ -98,6 +98,8 @@ the same exit codes as terminal output:
 
 The top-level `format_version` is currently `1`. CI integrations should check
 that value before consuming `environment` or `prompts` failures.
+Execution failures use `verdict: "error"` and include an `error` string, so
+stdout remains valid JSON for exit code `2`.
 
 ## What v0.3 checks
 
