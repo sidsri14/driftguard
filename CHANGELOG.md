@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 - Unreleased
+## 0.3.0 - 2026-07-20
 
 - Add stable `check --json` reports.
 - Add `doctor` configuration diagnostics with terminal and JSON output.
