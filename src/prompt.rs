@@ -16,6 +16,7 @@ pub const TEMPLATE_VAR_REGEX: &str = r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptFailureKind {
     UnmappedChangedPrompt,
+    MissingPromptFile,
     MissingSchema,
     MissingGoldenFixtures,
     InvalidGoldenJson,
@@ -112,7 +113,19 @@ pub fn check_prompts(
             .collect();
 
         for changed in changed_files {
-            if is_prompt_like_path(changed) && !mapped_files.contains(changed) {
+            if is_prompt_like_path(changed)
+                && mapped_files.contains(changed)
+                && !root.join(changed).is_file()
+            {
+                failures.push(PromptFailure {
+                    kind: PromptFailureKind::MissingPromptFile,
+                    file: Some(root.join(changed)),
+                    contract: contract_name_for_file(&contracts, changed),
+                    schema: None,
+                    fixture: None,
+                    reason: "mapped prompt file was deleted or is unavailable".to_string(),
+                });
+            } else if is_prompt_like_path(changed) && !mapped_files.contains(changed) {
                 failures.push(PromptFailure {
                     kind: PromptFailureKind::UnmappedChangedPrompt,
                     file: Some(root.join(changed)),
@@ -139,6 +152,15 @@ pub fn check_prompts(
     }
 
     failures
+}
+
+fn contract_name_for_file(
+    contracts: &BTreeMap<String, BTreeSet<String>>,
+    changed: &str,
+) -> Option<String> {
+    contracts
+        .iter()
+        .find_map(|(name, files)| files.contains(changed).then(|| name.clone()))
 }
 
 fn validate_contract(
@@ -428,6 +450,37 @@ mod tests {
         assert_eq!(failures[0].kind, PromptFailureKind::UnmappedChangedPrompt);
     }
 
+    #[test]
+    fn reports_deleted_mapped_prompt_when_changed() {
+        let dir = tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "schemas/router.schema.json",
+            r#"{
+  "type": "object",
+  "required": ["destination"],
+  "properties": {
+    "destination": { "type": "string" }
+  }
+}"#,
+        );
+        write_file(
+            dir.path(),
+            "tests/golden/router/case_01.json",
+            r#"{ "destination": "support" }"#,
+        );
+
+        let failures = check_prompts(
+            dir.path(),
+            &router_config(),
+            Some(&["src/prompts/router.md".to_string()]),
+        );
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].kind, PromptFailureKind::MissingPromptFile);
+        assert_eq!(failures[0].contract.as_deref(), Some("router"));
+    }
+
     fn router_config() -> Config {
         let mut prompts = BTreeMap::new();
         prompts.insert(
@@ -441,6 +494,7 @@ mod tests {
 
         Config {
             env_files: vec![".env.example".to_string()],
+            deployment_manifests: Vec::new(),
             ignore_dirs: crate::config::default_ignore_dirs(),
             source_globs: crate::config::default_source_globs(),
             ignore_env_keys: Vec::new(),

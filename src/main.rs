@@ -21,8 +21,12 @@ enum Commands {
     /// Run deployment contract checks.
     Check {
         /// Only inspect prompt files changed since this git ref.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "staged")]
         since: Option<String>,
+
+        /// Only inspect files staged in the git index.
+        #[arg(long)]
+        staged: bool,
 
         /// Environment scan scope. Use `changed` with --since to scan only changed source files.
         #[arg(long, value_enum, default_value_t = EnvScope::All)]
@@ -94,6 +98,7 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Commands::Check {
             since,
+            staged,
             env_scope,
             markdown,
             json,
@@ -102,16 +107,18 @@ fn run(cli: Cli) -> Result<(), String> {
             config::validate_runtime(&root, &config)?;
             let changed_files = match since {
                 Some(ref base) => git::changed_files(&root, base)?,
+                None if staged => git::staged_files(&root)?,
                 None => Vec::new(),
             };
-            if matches!(env_scope, EnvScope::Changed) && since.is_none() {
-                return Err("`--env-scope changed` requires `--since`.".to_string());
+            let has_change_source = since.is_some() || staged;
+            if matches!(env_scope, EnvScope::Changed) && !has_change_source {
+                return Err("`--env-scope changed` requires `--since` or `--staged`.".to_string());
             }
 
             let env_changed_files =
                 matches!(env_scope, EnvScope::Changed).then_some(changed_files.as_slice());
             let env_failures = env_scan::check_env(&root, &config, env_changed_files);
-            let prompt_changed_files = since.as_ref().map(|_| changed_files.as_slice());
+            let prompt_changed_files = has_change_source.then_some(changed_files.as_slice());
             let prompt_failures = prompt::check_prompts(&root, &config, prompt_changed_files);
             let format = if json {
                 report::ReportFormat::Json
@@ -155,8 +162,11 @@ fn install_hook(root: &std::path::Path, force: bool) -> Result<(), String> {
         return Err("pre-commit hook already exists. Re-run with `driftguard install-hook --force` to overwrite it.".to_string());
     }
 
-    fs::write(&hook_path, "#!/bin/sh\nset -eu\n\ndriftguard check\n")
-        .map_err(|err| format!("failed to write pre-commit hook: {err}"))?;
+    fs::write(
+        &hook_path,
+        "#!/bin/sh\nset -eu\n\ndriftguard check --staged --env-scope changed\n",
+    )
+    .map_err(|err| format!("failed to write pre-commit hook: {err}"))?;
 
     #[cfg(unix)]
     {

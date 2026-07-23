@@ -10,6 +10,8 @@ pub const CONFIG_FILE: &str = "driftguard.toml";
 pub struct Config {
     #[serde(default = "default_env_files")]
     pub env_files: Vec<String>,
+    #[serde(default = "default_deployment_manifests")]
+    pub deployment_manifests: Vec<String>,
     #[serde(default = "default_ignore_dirs")]
     pub ignore_dirs: Vec<String>,
     #[serde(default = "default_source_globs")]
@@ -31,6 +33,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             env_files: default_env_files(),
+            deployment_manifests: default_deployment_manifests(),
             ignore_dirs: default_ignore_dirs(),
             source_globs: default_source_globs(),
             ignore_env_keys: Vec::new(),
@@ -41,6 +44,25 @@ impl Default for Config {
 
 pub fn default_env_files() -> Vec<String> {
     vec![".env.example".to_string()]
+}
+
+pub fn default_deployment_manifests() -> Vec<String> {
+    [
+        ".env.production",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+        "k8s/**/*.yaml",
+        "k8s/**/*.yml",
+        "kubernetes/**/*.yaml",
+        "kubernetes/**/*.yml",
+        "vercel.json",
+        "netlify.toml",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 
 pub fn default_ignore_dirs() -> Vec<String> {

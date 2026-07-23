@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add `check --staged` and install pre-commit hooks with staged-file checking.
+- Recognize env declarations in optional deployment manifests including Docker Compose, Kubernetes YAML, Vercel JSON, Netlify TOML, and `.env.production`.
+- Flag dynamic env access that cannot be statically verified.
+- Fail changed checks when a mapped prompt file is deleted.
+- Expand env scanner coverage for Vite, Deno, Bun, Python `os.environ.get`, Rust `var_os`, and Rust `option_env!`.
+
 ## 0.3.0 - 2026-07-20
 
 - Add stable `check --json` reports.

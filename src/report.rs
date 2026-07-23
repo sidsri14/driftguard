@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::{
-    env_scan::{normalize_path, EnvFailure},
+    env_scan::{normalize_path, EnvFailure, EnvFailureKind},
     prompt::{PromptFailure, PromptFailureKind},
 };
 
@@ -26,6 +26,7 @@ struct JsonReport {
 
 #[derive(Serialize)]
 struct JsonEnvFailure {
+    kind: &'static str,
     file: String,
     line: usize,
     key: String,
@@ -77,17 +78,22 @@ fn print_terminal(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure]) {
         eprintln!("[ENVIRONMENT DRIFT]");
         eprintln!("----------------------------------------------------------------------");
         for failure in env {
-            eprintln!("Error: Missing environment variable initialization in manifest.");
+            eprintln!("Error: {}", env_title(&failure.kind));
             eprintln!(
                 "File:  {}:{}",
                 normalize_path(root, &failure.file),
                 failure.line
             );
-            eprintln!("Key:   {}", failure.key);
-            eprintln!(
-                "Fix:   Add '{}=' to your active env manifest: {}.",
-                failure.key, failure.env_file
-            );
+            if failure.kind == EnvFailureKind::DynamicKey {
+                eprintln!("Key:   <dynamic expression>");
+                eprintln!("Fix:   Use a literal env key or suppress this line if the dynamic access is intentional.");
+            } else {
+                eprintln!("Key:   {}", failure.key);
+                eprintln!(
+                    "Fix:   Add '{}=' to your active env manifest: {}.",
+                    failure.key, failure.env_file
+                );
+            }
             eprintln!();
         }
     }
@@ -129,13 +135,22 @@ fn print_markdown(root: &Path, env: &[EnvFailure], prompts: &[PromptFailure]) {
         println!("| File | Key | Fix |");
         println!("| --- | --- | --- |");
         for failure in env {
+            let fix = if failure.kind == EnvFailureKind::DynamicKey {
+                "Use a literal env key or add a narrow suppression.".to_string()
+            } else {
+                format!("Add `{}=` to `{}`", failure.key, failure.env_file)
+            };
+            let key = if failure.kind == EnvFailureKind::DynamicKey {
+                "<dynamic expression>"
+            } else {
+                &failure.key
+            };
             println!(
-                "| `{}:{}` | `{}` | Add `{}=` to `{}` |",
+                "| `{}:{}` | `{}` | {} |",
                 normalize_path(root, &failure.file),
                 failure.line,
-                failure.key,
-                failure.key,
-                failure.env_file
+                key,
+                fix
             );
         }
         println!();
@@ -183,6 +198,7 @@ fn print_json(
         environment: env
             .iter()
             .map(|failure| JsonEnvFailure {
+                kind: env_kind_code(&failure.kind),
                 file: normalize_path(root, &failure.file),
                 line: failure.line,
                 key: failure.key.clone(),
@@ -214,9 +230,26 @@ fn print_json(
     );
 }
 
+fn env_kind_code(kind: &EnvFailureKind) -> &'static str {
+    match kind {
+        EnvFailureKind::MissingDeclaration => "missing_declaration",
+        EnvFailureKind::DynamicKey => "dynamic_key",
+    }
+}
+
+fn env_title(kind: &EnvFailureKind) -> &'static str {
+    match kind {
+        EnvFailureKind::MissingDeclaration => {
+            "Missing environment variable initialization in manifest."
+        }
+        EnvFailureKind::DynamicKey => "Dynamic environment variable access cannot be verified.",
+    }
+}
+
 fn prompt_kind_code(kind: &PromptFailureKind) -> &'static str {
     match kind {
         PromptFailureKind::UnmappedChangedPrompt => "unmapped_changed_prompt",
+        PromptFailureKind::MissingPromptFile => "missing_prompt_file",
         PromptFailureKind::MissingSchema => "missing_schema",
         PromptFailureKind::MissingGoldenFixtures => "missing_golden_fixtures",
         PromptFailureKind::InvalidGoldenJson => "invalid_golden_json",
@@ -231,6 +264,7 @@ fn prompt_title(kind: &PromptFailureKind) -> &'static str {
         PromptFailureKind::UnmappedChangedPrompt => {
             "Changed prompt file has no mapped contract in driftguard.toml."
         }
+        PromptFailureKind::MissingPromptFile => "Mapped prompt file was deleted.",
         PromptFailureKind::MissingSchema => "Prompt contract schema is missing.",
         PromptFailureKind::MissingGoldenFixtures => {
             "Prompt contract has no matching golden fixtures."

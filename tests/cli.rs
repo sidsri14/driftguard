@@ -151,7 +151,7 @@ fn install_hook_writes_pre_commit_hook() {
     );
 
     let hook = fs::read_to_string(dir.path().join(".git/hooks/pre-commit")).unwrap();
-    assert!(hook.contains("driftguard check"));
+    assert!(hook.contains("driftguard check --staged --env-scope changed"));
 }
 
 #[test]
@@ -189,6 +189,47 @@ fn changed_env_scope_ignores_unchanged_missing_env_usage() {
         .unwrap();
 
     assert_success(&output);
+}
+
+#[test]
+fn staged_env_scope_checks_only_staged_files() {
+    let dir = tempdir().unwrap();
+    run_git(dir.path(), &["init"]);
+    run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+    run_git(dir.path(), &["config", "user.name", "DriftGuard Test"]);
+    assert_success(
+        &driftguard()
+            .current_dir(dir.path())
+            .arg("init")
+            .output()
+            .unwrap(),
+    );
+    write_file(dir.path(), ".env.example", "DATABASE_URL=\n");
+    write_file(
+        dir.path(),
+        "src/unstaged.ts",
+        "const ignored = process.env.UNSTAGED_TOKEN;\n",
+    );
+    write_file(
+        dir.path(),
+        "src/staged.ts",
+        "const found = process.env.STAGED_TOKEN;\n",
+    );
+    run_git(
+        dir.path(),
+        &["add", ".env.example", "driftguard.toml", "src/staged.ts"],
+    );
+
+    let output = driftguard()
+        .current_dir(dir.path())
+        .args(["check", "--staged", "--env-scope", "changed"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("STAGED_TOKEN"));
+    assert!(!stderr.contains("UNSTAGED_TOKEN"));
 }
 
 fn write_file(root: &Path, relative: &str, contents: &str) {

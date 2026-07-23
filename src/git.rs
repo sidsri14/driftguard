@@ -23,6 +23,25 @@ pub fn changed_files(root: &Path, since: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
+pub fn staged_files(root: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["diff", "--cached", "--name-only", "--"])
+        .output()
+        .map_err(|err| format!("failed to execute git diff --cached: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git diff --cached failed: {}", stderr.trim()));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().replace('\\', "/"))
+        .filter(|line| !line.is_empty())
+        .collect())
+}
+
 fn git_ref_exists(root: &Path, git_ref: &str) -> bool {
     Command::new("git")
         .current_dir(root)

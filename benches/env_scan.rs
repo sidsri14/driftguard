@@ -20,6 +20,7 @@ fn benchmark_env_scan(criterion: &mut Criterion) {
 
     let config = config::Config {
         env_files: vec![".env.example".to_string()],
+        deployment_manifests: Vec::new(),
         ignore_dirs: config::default_ignore_dirs(),
         source_globs: vec!["**/*.ts".to_string()],
         ignore_env_keys: Vec::new(),

@@ -31,6 +31,7 @@ driftguard init
 driftguard check
 driftguard check --since origin/main
 driftguard check --since origin/main --env-scope changed
+driftguard check --staged --env-scope changed
 driftguard check --since origin/main --markdown
 driftguard check --json
 driftguard doctor
@@ -44,6 +45,7 @@ driftguard install-hook
 
 ```toml
 env_files = [".env.example"]
+deployment_manifests = [".env.production", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", "k8s/**/*.yaml", "k8s/**/*.yml", "kubernetes/**/*.yaml", "kubernetes/**/*.yml", "vercel.json", "netlify.toml"]
 ignore_dirs = [".git", "node_modules", "target", "dist", "build", ".next", ".venv", "__pycache__"]
 source_globs = ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.mjs", "**/*.cjs", "**/*.py", "**/*.rs"]
 ignore_env_keys = []
@@ -65,6 +67,15 @@ are active only when their mapped prompt files exist.
 Use `--env-scope changed` with `--since` when you only want environment checks
 against changed source files. The default `--env-scope all` scans the configured
 source globs across the repository.
+
+Use `--staged --env-scope changed` for pre-commit checks against files staged in
+the Git index. `driftguard install-hook` installs this staged-file check by
+default.
+
+`deployment_manifests` adds optional declaration sources from deployment files
+when they exist. DriftGuard recognizes common Docker Compose and Kubernetes YAML
+environment declarations, Vercel `env` objects, Netlify environment tables, and
+`.env.production` style files.
 
 ## False-positive controls
 
@@ -103,16 +114,19 @@ stdout remains valid JSON for exit code `2`.
 
 ## What v0.3 checks
 
-- JS/TS: `process.env.KEY` and `process.env["KEY"]`
+- JS/TS: `process.env.KEY`, `process.env?.KEY`, `process.env!.KEY`, and `process.env["KEY"]`
 - JS/TS destructuring: `const { KEY } = process.env`
-- Python: `os.getenv("KEY")` and `os.environ["KEY"]`
-- Rust: `std::env::var("KEY")` and `env!("KEY")`
+- Vite/Deno/Bun: `import.meta.env.KEY`, `Deno.env.get("KEY")`, and `Bun.env.KEY`
+- Python: `os.getenv("KEY")`, `os.environ["KEY"]`, and `os.environ.get("KEY")`
+- Rust: `std::env::var("KEY")`, `std::env::var_os("KEY")`, `env!("KEY")`, and `option_env!("KEY")`
+- Dynamic env access such as `process.env[key]`, `os.environ.get(name)`, or `std::env::var(name)` is flagged because DriftGuard cannot verify the declaration statically
 - JS/TS/Rust line and block comments are ignored during env scanning
 - Python line comments are ignored during env scanning
 - Missing keys in configured env manifests
 - Prompt golden fixtures that violate configured JSON schemas
 - Prompt template variables like `{{user_payload}}` missing from golden fixture inputs
 - Changed prompt markdown files without mapped contracts when `--since` is used
+- Deleted mapped prompt files when `--since` or `--staged` is used
 - Project-wide and line-level env scan suppressions
 - Configuration health through `driftguard doctor`
 
