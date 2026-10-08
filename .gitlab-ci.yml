@@ -1,0 +1,39 @@
+stages:
+  - quality
+  - contract
+
+default:
+  image: rust:1.85-bookworm
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - target/
+  before_script:
+    - rustup component add rustfmt clippy
+
+format:
+  stage: quality
+  script:
+    - cargo fmt --check
+
+clippy:
+  stage: quality
+  script:
+    - cargo clippy --all-targets --all-features --locked -- -D warnings
+
+test:
+  stage: quality
+  script:
+    - cargo test --locked
+
+driftguard-contracts:
+  stage: contract
+  script:
+    - cargo run --locked -- check --json > driftguard-report.json
+  artifacts:
+    when: always
+    paths:
+      - driftguard-report.json
+    expire_in: 7 days

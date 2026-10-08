@@ -1,0 +1,16 @@
+image: rust:1.85-bookworm
+
+setup_script:
+  - rustup component add rustfmt clippy
+  - cargo fetch --locked
+
+cache:
+  key:
+    files:
+      - Cargo.lock
+    prefix: driftguard-rust
+  paths:
+    - target/
+
+network_policy:
+  include_recommended_allowed: true

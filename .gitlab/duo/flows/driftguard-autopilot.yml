@@ -1,0 +1,198 @@
+version: "v1"
+environment: ambient
+coding_environment: full
+
+components:
+  - name: "analyzer"
+    type: AgentComponent
+    prompt_id: "driftguard_analysis"
+    require_tool_approval: true
+    pre_approved_tools:
+      - "read_file"
+      - "list_dir"
+      - "find_files"
+      - "grep"
+      - "run_command"
+    toolset:
+      - "read_file"
+      - "list_dir"
+      - "find_files"
+      - "grep"
+      - "run_command"
+      - "get_merge_request"
+    inputs:
+      - from: "context:project_id"
+        as: "project_id"
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:inputs.user_rule"
+        as: "agents_dot_md"
+        optional: true
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_success"
+      - "on_tool_execution_failed"
+
+  - name: "review_gate"
+    type: HumanInputComponent
+    sends_response_to: "analyzer"
+    interaction_type: "approval"
+    message_template: |
+      DriftGuard has reproduced the contract failure and proposed a bounded fix.
+      Review the evidence and choose Approve, Modify, or Reject before any file is changed.
+    ui_log_events:
+      - "on_user_input_prompt"
+      - "on_user_response"
+
+  - name: "remediator"
+    type: AgentComponent
+    prompt_id: "driftguard_remediation"
+    require_tool_approval: true
+    pre_approved_tools:
+      - "read_file"
+      - "list_dir"
+      - "find_files"
+      - "grep"
+      - "edit_file"
+      - "create_file_with_contents"
+      - "run_command"
+    toolset:
+      - "read_file"
+      - "list_dir"
+      - "find_files"
+      - "grep"
+      - "edit_file"
+      - "create_file_with_contents"
+      - "run_command"
+      - "create_branch"
+      - "create_merge_request"
+      - "create_merge_request_note"
+    inputs:
+      - from: "context:project_id"
+        as: "project_id"
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:analyzer.final_answer"
+        as: "approved_plan"
+      - from: "context:inputs.user_rule"
+        as: "agents_dot_md"
+        optional: true
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_success"
+      - "on_tool_execution_failed"
+      - "on_tool_approval_request"
+
+  - name: "verifier"
+    type: AgentComponent
+    prompt_id: "driftguard_verification"
+    require_tool_approval: true
+    pre_approved_tools:
+      - "read_file"
+      - "run_command"
+    toolset:
+      - "read_file"
+      - "run_command"
+      - "create_merge_request_note"
+    inputs:
+      - from: "context:project_id"
+        as: "project_id"
+      - from: "context:goal"
+        as: "goal"
+      - from: "context:remediator.final_answer"
+        as: "remediation_result"
+    ui_log_events:
+      - "on_agent_final_answer"
+      - "on_tool_execution_success"
+      - "on_tool_execution_failed"
+
+prompts:
+  - prompt_id: "driftguard_analysis"
+    name: "DriftGuard Analysis"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        You are the analysis stage of DriftGuard Autopilot. Work only inside the checked-out repository.
+        Read the project guidance and reproduce the reported environment or prompt-contract failure before proposing a change.
+        You may run only non-destructive inspection commands and the required DriftGuard checks. Do not edit files, install dependencies,
+        read secret values, or claim a result you did not observe. Produce a minimal proposal containing the reproduced failure,
+        likely root cause, exact files that would change, regression-test plan, and commands that must pass.
+        When the proposal is complete, your final answer is the reviewable plan and evidence. No further steps are needed after that.
+      user: |
+        Project ID: {{ project_id }}
+        Trigger goal: {{ goal }}
+        Project guidance: {{ agents_dot_md }}
+      placeholder: history
+    params:
+      timeout: 300
+
+  - prompt_id: "driftguard_remediation"
+    name: "DriftGuard Remediation"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        You are the remediation stage of DriftGuard Autopilot. The human has approved the analysis-stage plan.
+        Apply only that bounded plan. Add focused regression coverage for behavioral changes and preserve existing report compatibility.
+        Do not add dependencies, weaken checks, touch secrets, or expand scope. Run cargo fmt --check,
+        cargo clippy --all-targets --all-features --locked -- -D warnings, cargo test --locked, and
+        cargo run --locked -- check --json. Create a merge request only after all required checks pass.
+        The merge request summary must list observed results without invented counts or deployment claims.
+        When the change and merge request are ready, your final answer is the merge request reference plus the exact verification evidence.
+        No further steps are needed after that.
+      user: |
+        Project ID: {{ project_id }}
+        Trigger goal: {{ goal }}
+        Human-approved plan: {{ approved_plan }}
+        Project guidance: {{ agents_dot_md }}
+      placeholder: history
+    params:
+      timeout: 600
+
+  - prompt_id: "driftguard_verification"
+    name: "DriftGuard Verification"
+    unit_primitives: []
+    prompt_template:
+      system: |
+        You are the independent verification stage of DriftGuard Autopilot. Inspect the resulting diff and rerun all required checks.
+        Compare the implementation against the approved scope and reject unsupported claims, weakened validation, unrelated edits,
+        missing regression coverage, or failures. Do not modify files. If a merge request exists, post a concise evidence note only when
+        the checks actually pass. When verification is complete, your final answer is a pass or fail decision with the exact commands
+        and observed outcomes. No further steps are needed after that.
+      user: |
+        Project ID: {{ project_id }}
+        Trigger goal: {{ goal }}
+        Remediation result: {{ remediation_result }}
+      placeholder: history
+    params:
+      timeout: 300
+
+routers:
+  - from: "analyzer"
+    to: "review_gate"
+  - from: "review_gate"
+    condition:
+      input: "context:review_gate.approval"
+      routes:
+        "approve": "remediator"
+        "modify": "analyzer"
+        "reject": "end"
+        "default_route": "end"
+  - from: "remediator"
+    to: "verifier"
+  - from: "verifier"
+    to: "end"
+
+flow:
+  entry_point: "analyzer"
+  inputs:
+    - category: agent_platform_standard_context
+      input_schema:
+        primary_branch:
+          type: string
+          description: Default branch for the project.
+        workload_branch:
+          type: string
+          description: Workload branch for the flow session.
+        session_owner_id:
+          type: string
+          description: Human user who initiated the flow.
