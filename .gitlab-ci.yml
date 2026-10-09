@@ -1,0 +1,50 @@
+# GitLab CI/CD Pipeline for DriftGuard Contract & Schema Enforcement
+# Integrates with GitLab Duo and Merge Request Pipelines
+
+stages:
+  - test
+  - contract-check
+
+variables:
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  APT_CACHE_DIR: $CI_PROJECT_DIR/.apt
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .cargo/
+    - target/
+
+test:quality:
+  stage: test
+  image: rust:latest
+  script:
+    - cargo test --all
+    - cargo clippy -- -D warnings
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+driftguard:contract-gate:
+  stage: contract-check
+  image: rust:latest
+  before_script:
+    - git fetch origin $CI_DEFAULT_BRANCH
+    - cargo install --path .
+  script:
+    - |
+      if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
+        driftguard check --since $CI_MERGE_REQUEST_DIFF_BASE_SHA --env-scope changed --markdown > driftguard-report.md
+      else
+        driftguard check --markdown > driftguard-report.md
+      fi
+      cat driftguard-report.md
+  artifacts:
+    name: "driftguard-contract-report-$CI_COMMIT_SHORT_SHA"
+    expose_as: "DriftGuard Schema & Contract Report"
+    paths:
+      - driftguard-report.md
+    when: always
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
